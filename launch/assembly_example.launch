@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<launch>
+
+  <arg name="nonstop"   default="false" doc="Run the full example without pausing between assembly steps." />
+
+  <node pkg="assembly_example" name="assembly_example" type="assembly_example.py" output="screen">
+    <param name="nonstop" type="bool"  value="$(arg nonstop)" />
+  </node>
+
+</launch>

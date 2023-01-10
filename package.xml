@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package>
+  <name>assembly_example</name>
+  <version>1.0.0</version>
+  <description>assembly example package</description>
+
+  <maintainer email="fpatzelt@techfak.uni-bielefeld.de">Florian Patzelt</maintainer>
+  <license>BSD</license>
+
+  <author email="fpatzelt@techfak.de">Florian Patzelt</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <run_depend>panda_moveit_config</run_depend>
+
+</package>
