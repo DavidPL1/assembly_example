@@ -12,6 +12,7 @@ import geometry_msgs.msg
 import numpy as np
 import tf.transformations as tft
 from franka_gripper.msg import GraspActionGoal
+from std_srvs.srv import Empty, EmptyRequest
 
 try:
     from math import pi, tau, dist, fabs, cos
@@ -66,7 +67,12 @@ class AssemblyDemo(object):
 
         # First initialize `moveit_commander`_ and a `rospy`_ node:
         moveit_commander.roscpp_initialize(sys.argv)
-        rospy.init_node("move_group_python_interface_tutorial", anonymous=True)
+        rospy.init_node("assembly_example", anonymous=True)       
+        
+        # signal assembly manager that we are ready
+        rospy.wait_for_service('user_ready')
+        user_ready = rospy.ServiceProxy('user_ready', Empty)
+        user_ready(EmptyRequest())
 
         # Instantiate a `RobotCommander`_ object. Provides information such as the robot's
         # kinematic model and the robot's current joint states
