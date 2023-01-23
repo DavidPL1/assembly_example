@@ -68,12 +68,13 @@ class AssemblyDemo(object):
         # First initialize `moveit_commander`_ and a `rospy`_ node:
         moveit_commander.roscpp_initialize(sys.argv)
         rospy.init_node("assembly_example", anonymous=True)       
-        
-        # signal assembly manager that we are ready
-        rospy.wait_for_service('user_ready')
-        user_ready = rospy.ServiceProxy('user_ready', Empty)
-        user_ready(EmptyRequest())
 
+        if rospy.has_param('~with_assembly_manager') and rospy.get_param('~with_assembly_manager'):
+            # signal assembly manager that we are ready
+            rospy.wait_for_service('user_ready')
+            user_ready = rospy.ServiceProxy('user_ready', Empty)
+            user_ready(EmptyRequest())
+        
         # Instantiate a `RobotCommander`_ object. Provides information such as the robot's
         # kinematic model and the robot's current joint states
         self.robot = robot = moveit_commander.RobotCommander()
@@ -301,7 +302,7 @@ def main():
         waypoints = []
 
         nut_pos_msg = rospy.wait_for_message(
-            '/nut_pos', geometry_msgs.msg.PointStamped)
+            '/nut_head_pos', geometry_msgs.msg.PointStamped)
         nut_quat_msg = rospy.wait_for_message(
             '/nut_quat', geometry_msgs.msg.QuaternionStamped)
 
@@ -337,7 +338,7 @@ def main():
         pose_goal.orientation = geometry_msgs.msg.Quaternion(*q)
 
         pose_goal.position = nut_pos_msg.point
-        pose_goal.position.z += 0.155
+        pose_goal.position.z += 0.155 - (0.0021749 + 0.0058 + 0.001)
 
         waypoints.append(copy.deepcopy(pose_goal))
         pose_goal.position.z -= 0.05
@@ -358,9 +359,12 @@ def main():
             input("============ Press `Enter` to go to fixture ...")
         waypoints.clear()
 
+        fixture_pos_msg = rospy.wait_for_message(
+            '/fixture_pos', geometry_msgs.msg.PointStamped)
+
         pose_goal.orientation = geometry_msgs.msg.Quaternion(*q_fixture)
-        pose_goal.position.x = 0.5
-        pose_goal.position.y = 0
+        pose_goal.position.x = fixture_pos_msg.point.x
+        pose_goal.position.y = fixture_pos_msg.point.y
         pose_goal.position.z = 0.57
         pose_goal.position.x += pos_offset_fixture_x
         pose_goal.position.z += pos_offset_fixture_z
@@ -382,7 +386,7 @@ def main():
         waypoints = []
 
         screw_pos_msg = rospy.wait_for_message(
-            '/screw_pos', geometry_msgs.msg.PointStamped)
+            '/screw_head_pos', geometry_msgs.msg.PointStamped)
 
         pose_goal = geometry_msgs.msg.Pose()
         q = tft.quaternion_from_euler(np.pi, 0, - np.pi / 4.)
@@ -409,11 +413,11 @@ def main():
             input("============ Press `Enter` to go to screwing pose ...")
         waypoints.clear()
         nut_pos_msg = rospy.wait_for_message(
-            '/nut_pos', geometry_msgs.msg.PointStamped)
+            '/nut_head_pos', geometry_msgs.msg.PointStamped)
         pose_goal.orientation = geometry_msgs.msg.Quaternion(*q)
         pose_goal.position.x = nut_pos_msg.point.x
         pose_goal.position.y = nut_pos_msg.point.y
-        pose_goal.position.z = nut_pos_msg.point.z + 0.03275 + 0.165
+        pose_goal.position.z = nut_pos_msg.point.z + 0.03275 + 0.165 - (0.0021749 + 0.0058 + 0.001)
 
         waypoints.append(copy.deepcopy(pose_goal))
         pose_goal.position.z -= 0.074
