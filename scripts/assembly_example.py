@@ -84,15 +84,18 @@ class AssemblyDemo(object):
         # surrounding world:
         scene = moveit_commander.PlanningSceneInterface()
 
+        table_height = 0.4
+        if rospy.has_param('table_height'):
+            table_height = rospy.get_param('table_height')
         table_pose = geometry_msgs.msg.PoseStamped()
         table_pose.pose.orientation.w = 1
         table_pose.pose.position.x = 0.5
         table_pose.pose.position.y = 0.0
-        table_pose.pose.position.z = 0.20
+        table_pose.pose.position.z = table_height / 2
         table_pose.header.frame_id = 'world'
 
         while not self.wait_for_state_update(scene, 'table', True, False, 4):
-            scene.add_box('table', table_pose, size=(0.50, 0.80, 0.4))
+            scene.add_box('table', table_pose, size=(0.50, 0.80, table_height))
 
         print('Added/Found table to/in planning scene')
         # Instantiate a `MoveGroupCommander`_ object.  This object is an interface
@@ -176,9 +179,9 @@ class AssemblyDemo(object):
         current_joints = self.move_group_hand.get_current_joint_values()
         return all_close(joint_goal, current_joints, 0.01)
 
-    def close_gripper(self):
+    def close_gripper(self, width):
         gag = GraspActionGoal()
-        gag.goal.width = 0.03
+        gag.goal.width = width
         gag.goal.epsilon.inner = 0.01
         gag.goal.epsilon.outer = 0.01
         gag.goal.force = 10
@@ -197,10 +200,14 @@ class AssemblyDemo(object):
         move_group.stop()
 
         screw_pos_msg = rospy.wait_for_message(
-            '/screw_pos', geometry_msgs.msg.PointStamped)
+            '/screw_head_pos', geometry_msgs.msg.PointStamped)
         z0 = screw_pos_msg.point.z
         z1 = z0
         z2 = z0
+
+        width = 0.03
+        if rospy.has_param('screw_top_radius'):
+            width = 2 * rospy.get_param('screw_top_radius')
 
         print(z0, z1, z2)
 
@@ -214,14 +221,14 @@ class AssemblyDemo(object):
                 move_group.stop()
 
             else:
-                self.close_gripper()
+                self.close_gripper(width)
                 rospy.sleep(1)
                 joint_goal[6] = 7. * np.pi / 8.  # += np.pi / 4.
                 move_group.go(joint_goal, wait=True)
                 move_group.stop()
 
             screw_pos_msg = rospy.wait_for_message(
-                '/screw_pos', geometry_msgs.msg.PointStamped)
+                '/screw_head_pos', geometry_msgs.msg.PointStamped)
             z2 = screw_pos_msg.point.z
 
     def plan_cartesian_path(self, waypoints, velocity_scaling=0.4, acceleration_scaling=0.4, reparam_algo="time_optimal_trajectory_generation"):
@@ -312,6 +319,8 @@ def main():
                      nut_quat_msg.quaternion.z, nut_quat_msg.quaternion.w])
         z_axis = tft.quaternion_matrix(q)[:-1, 2]
 
+        gripper_z_offset = 0.105 - (0.0021749 + 0.0058 + 0.001)
+
         if np.isclose(z_axis[2], 1):
             y_axis = np.array([0, 0, 1])
             z_axis = np.array([1, 0, 0])
@@ -338,7 +347,7 @@ def main():
         pose_goal.orientation = geometry_msgs.msg.Quaternion(*q)
 
         pose_goal.position = nut_pos_msg.point
-        pose_goal.position.z += 0.155 - (0.0021749 + 0.0058 + 0.001)
+        pose_goal.position.z += (gripper_z_offset + 0.05)
 
         waypoints.append(copy.deepcopy(pose_goal))
         pose_goal.position.z -= 0.05
@@ -352,7 +361,10 @@ def main():
         assemblyDemo.execute_plan(plan)
         if not nonstop:
             input("============ Press `Enter` to close gripper ...")
-        assemblyDemo.close_gripper()
+        width = 0.03
+        if rospy.has_param('nut_top_radius'):
+            width = 2 * rospy.get_param('nut_top_radius')
+        assemblyDemo.close_gripper(width)
         rospy.sleep(2)
 
         if not nonstop:
@@ -362,15 +374,24 @@ def main():
         fixture_pos_msg = rospy.wait_for_message(
             '/fixture_pos', geometry_msgs.msg.PointStamped)
 
+
+        fixture_outer_height = rospy.get_param('fixture_outer_height')
+        fixture_inner_height = rospy.get_param('fixture_inner_height')
+        nut_top_length = rospy.get_param('nut_top_length')
+        nut_bottom_length = rospy.get_param('nut_bottom_length')
+
+
+
+
         pose_goal.orientation = geometry_msgs.msg.Quaternion(*q_fixture)
         pose_goal.position.x = fixture_pos_msg.point.x
         pose_goal.position.y = fixture_pos_msg.point.y
-        pose_goal.position.z = 0.57
+        pose_goal.position.z = fixture_pos_msg.point.z + fixture_outer_height + nut_bottom_length + nut_top_length + gripper_z_offset + 0.01
         pose_goal.position.x += pos_offset_fixture_x
         pose_goal.position.z += pos_offset_fixture_z
 
         waypoints.append(copy.deepcopy(pose_goal))
-        pose_goal.position.z -= 0.07
+        pose_goal.position.z = fixture_pos_msg.point.z + fixture_inner_height + nut_top_length + gripper_z_offset
 
         waypoints.append(copy.deepcopy(pose_goal))
         plan, fraction = assemblyDemo.plan_cartesian_path(waypoints)
@@ -392,9 +413,8 @@ def main():
         q = tft.quaternion_from_euler(np.pi, 0, - np.pi / 4.)
         pose_goal.orientation = geometry_msgs.msg.Quaternion(*q)
 
-        pose_goal.position.x = screw_pos_msg.point.x
-        pose_goal.position.y = screw_pos_msg.point.y
-        pose_goal.position.z = screw_pos_msg.point.z + 0.15
+        pose_goal.position = screw_pos_msg.point
+        pose_goal.position.z += (gripper_z_offset + 0.05 + 0.01)
 
         waypoints.append(copy.deepcopy(pose_goal))
         pose_goal.position.z -= 0.05
@@ -406,7 +426,10 @@ def main():
         assemblyDemo.execute_plan(plan)
         if not nonstop:
             input("============ Press `Enter` to close gripper ...")
-        assemblyDemo.close_gripper()
+        width = 0.03
+        if rospy.has_param('screw_top_radius'):
+            width = 2 * rospy.get_param('screw_top_radius')
+        assemblyDemo.close_gripper(width)
         rospy.sleep(2)
 
         if not nonstop:
@@ -414,13 +437,21 @@ def main():
         waypoints.clear()
         nut_pos_msg = rospy.wait_for_message(
             '/nut_head_pos', geometry_msgs.msg.PointStamped)
+
+        
+        screw_top_length = rospy.get_param('screw_top_length')
+        screw_bottom_length = rospy.get_param('screw_bottom_length')
+
         pose_goal.orientation = geometry_msgs.msg.Quaternion(*q)
         pose_goal.position.x = nut_pos_msg.point.x
         pose_goal.position.y = nut_pos_msg.point.y
-        pose_goal.position.z = nut_pos_msg.point.z + 0.03275 + 0.165 - (0.0021749 + 0.0058 + 0.001)
+        pose_goal.position.z = nut_pos_msg.point.z + screw_top_length + screw_bottom_length + gripper_z_offset + 0.05
 
         waypoints.append(copy.deepcopy(pose_goal))
-        pose_goal.position.z -= 0.074
+
+        nut_pos_msg = rospy.wait_for_message(
+            '/nut_peg_pos', geometry_msgs.msg.PointStamped)
+        pose_goal.position.z = nut_pos_msg.point.z + screw_top_length + screw_bottom_length + gripper_z_offset + 0.01
 
         waypoints.append(copy.deepcopy(pose_goal))
         plan, fraction = assemblyDemo.plan_cartesian_path(waypoints)
