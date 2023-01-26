@@ -13,8 +13,8 @@ catkin_package()
 ## Install ##
 #############
 
-install(DIRECTORY scripts
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+catkin_install_python(PROGRAMS nodes/assembly_example
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 install(DIRECTORY launch

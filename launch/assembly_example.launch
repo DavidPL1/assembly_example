@@ -5,7 +5,7 @@
   <arg name="with_assembly_manager"   default="true" doc="Run the example with/without a running assembly_manager." />
   <param name="use_sim_time" value="true" />
 
-  <node pkg="assembly_example" name="assembly_example" type="assembly_example.py" output="screen">
+  <node pkg="assembly_example" name="assembly_example" type="assembly_example" output="screen">
     <param name="nonstop" type="bool"  value="$(arg nonstop)" />
     <param name="with_assembly_manager" type="bool"  value="$(arg with_assembly_manager)" />
   </node>
