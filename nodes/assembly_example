@@ -347,7 +347,7 @@ def main():
         pose_goal.orientation = geometry_msgs.msg.Quaternion(*q)
 
         pose_goal.position = nut_pos_msg.point
-        pose_goal.position.z += (gripper_z_offset + 0.05)
+        pose_goal.position.z += (gripper_z_offset + 0.05 + 0.01)
 
         waypoints.append(copy.deepcopy(pose_goal))
         pose_goal.position.z -= 0.05
@@ -386,7 +386,7 @@ def main():
         pose_goal.orientation = geometry_msgs.msg.Quaternion(*q_fixture)
         pose_goal.position.x = fixture_pos_msg.point.x
         pose_goal.position.y = fixture_pos_msg.point.y
-        pose_goal.position.z = fixture_pos_msg.point.z + fixture_outer_height + nut_bottom_length + nut_top_length + gripper_z_offset + 0.01
+        pose_goal.position.z = fixture_pos_msg.point.z + fixture_outer_height + nut_bottom_length + nut_top_length + gripper_z_offset + 0.02
         pose_goal.position.x += pos_offset_fixture_x
         pose_goal.position.z += pos_offset_fixture_z
 
