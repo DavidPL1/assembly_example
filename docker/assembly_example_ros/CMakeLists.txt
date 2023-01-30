@@ -13,7 +13,7 @@ catkin_package()
 ## Install ##
 #############
 
-catkin_install_python(PROGRAMS nodes/assembly_example
+catkin_install_python(PROGRAMS nodes/assembly_screw nodes/assembly_plug
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
