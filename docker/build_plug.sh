@@ -10,4 +10,4 @@ while [ -L "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symli
 done
 DIR=$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )
 
-docker build -f screw.Dockerfile -t s4dx/assembly_plug_example $DIR
+docker build -f $DIR/screw.Dockerfile -t s4dx/assembly_plug_example $DIR
