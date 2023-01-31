@@ -1,0 +1,16 @@
+version: '2'
+services:
+  watcher:
+    image: s4dx/watcher:latest
+    environment:
+      - ROS_HOSTNAME=watcher
+      - ROS_MASTER_URI=http://server:11311
+    depends_on:
+      - server
+    networks:
+      - rosnet
+    volumes:
+      - ./rosbags:/data
+
+networks:
+  rosnet:
