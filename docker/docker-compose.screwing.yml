@@ -1,0 +1,23 @@
+version: '2'
+services:
+  server:
+    image: s4dx/assembly_server:latest
+    command: headless:=true task:=screwing
+    environment:
+      - ROS_HOSTNAME=server
+    networks:
+      - rosnet
+
+  usercode:
+    image: s4dx/assembly_example:latest
+    command: --wait assembly_example assembly_example.launch nonstop:=true
+    environment:
+      - ROS_HOSTNAME=usercode
+      - ROS_MASTER_URI=http://server:11311 
+    depends_on:
+      - server
+    networks:
+      - rosnet
+
+networks:
+  rosnet:
