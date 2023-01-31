@@ -10,7 +10,6 @@ services:
 
   usercode:
     image: s4dx/assembly_screw_example:latest
-    command: --wait assembly_example assembly_screw.launch
     environment:
       - ROS_HOSTNAME=usercode
       - ROS_MASTER_URI=http://server:11311 

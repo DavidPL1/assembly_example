@@ -36,4 +36,4 @@ RUN sudo apt install -y ros-noetic-moveit-planners-chomp ros-noetic-moveit-plann
 COPY assembly_entrypoint.sh .
 # ENTRYPOINT ["/bin/bash"]
 ENTRYPOINT ["./assembly_entrypoint.sh", ""]
-CMD ["assembly_example assembly_screw.launch nonstop:=true"]
+CMD ["--wait assembly_example assembly_screw.launch"]
