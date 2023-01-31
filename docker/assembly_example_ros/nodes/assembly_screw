@@ -8,6 +8,7 @@ Feel free to extend this example with your own solution.
 """
 from __future__ import print_function
 
+import sys
 import copy
 import rospy
 import moveit_commander
