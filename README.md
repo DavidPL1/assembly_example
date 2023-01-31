@@ -1,23 +1,12 @@
+# Quickstart Guide
+
+This repository provides an example of how to write code to interface with our simulation environment.
+
+For more information about interfacing the simulation with your own code or dockerizing your code, please visit our [wiki](https://github.com/DavidPL1/assembly_example/wiki).
+
 # Building
-Build the image by running `build.sh`
+Build the example images by running `./docker/build_screw.sh` first, and then `./docker/build_plug.sh`.
 
 # Running
 
-The container sources the simulation ros environment and launches the simulation manager with default arguments.
-
-## Dev Mode
-This mode starts the simulation such that the host machine can connect to it, e.g. with rviz or any other component.
-
-To run in dev mode run `docker run --rm --net=host -it s4dx/assembly_server`. Note: the `--net=host` option runs the container in the host network, meaning there are no restrictions with port communication (this is needed for ROS, since ROS nodes utilize a wide port range for communication). 
-The default arguments to the manager (`verbose:=true headless:=true`) can be overridden by appending ros arguments directly to the docker run command. 
-
-Other arguments that can be provided are:
-TODO
-
-## Pipeline Mode
-
-1. clone/pull and build the dockerized assembly_example: `git clone git@gitlab.ub.uni-bielefeld.de:agni/grasplab/s4dx/assembly_example_dockerized.git && ./assembly_example_dockerized/build.sh`
-2. Start everything automatically by running `docker-compose up`. This allows no kind of interaction from the host machine, you will only get the log outputs of the running containers.
-
-### Train/Test Mode
-TODO
+To start the simulation along with the example program, you can run `docker-compose -f ./docker/docker-compose.TASK.yml up`, replacing TASK with either screwing or plugging, depending on the task you want to launch.
