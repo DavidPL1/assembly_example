@@ -9,8 +9,8 @@ services:
       - rosnet
 
   usercode:
-    image: s4dx/assembly_example:latest
-    command: --wait assembly_example assembly_example.launch nonstop:=true
+    image: s4dx/assembly_plugging_example:latest
+    command: --wait assembly_example assembly_plug.launch nonstop:=true
     environment:
       - ROS_HOSTNAME=usercode
       - ROS_MASTER_URI=http://server:11311 
