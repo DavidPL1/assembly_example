@@ -15,8 +15,10 @@ import moveit_commander
 import moveit_msgs.msg
 import geometry_msgs.msg
 from franka_gripper.msg import GraspActionGoal
-from std_srvs.srv import Empty, EmptyRequest
+from std_srvs.srv import Trigger, TriggerRequest
 import sensor_msgs.msg
+import time
+from controller_manager import controller_manager_interface
 
 
 def wait_for_state_update(scene, box_name, box_is_known=False, box_is_attached=False, timeout=4):
@@ -55,8 +57,8 @@ def main():
     # Signal assembly manager that we are ready to start the assembly run
     # This will unpause the simulation and makes all relevant rostopics accessible
     rospy.wait_for_service('user_ready')
-    user_ready = rospy.ServiceProxy('user_ready', Empty)
-    user_ready(EmptyRequest())
+    user_ready = rospy.ServiceProxy('user_ready', Trigger)
+    user_ready(TriggerRequest())
 
     # Get constants from the rosparam-server
     # Most of this information is only availabe on difficulty levels 1 and 2
@@ -247,7 +249,86 @@ def main():
     gag.goal.force = 10
     gag.goal.speed = 0.05
     grasp_action_pub.publish(gag)
-    rospy.sleep(2)
+
+    time.sleep(5)
+
+    # Trigger reload, this will abort any running assembly
+    reload_with_old_scene = rospy.ServiceProxy('reload_with_old_scene', Trigger)
+    reload_with_old_scene(TriggerRequest())    
+
+    
+
+    # Always wait for and call user_ready before doing another reload
+    rospy.wait_for_service('user_ready')
+    user_ready(TriggerRequest())
+
+    # reload controllers
+    controllers = ['franka_gripper', 'franka_state_controller', 'effort_joint_trajectory_controller']
+    for c in controllers:
+        controller_manager_interface.load_controller(c)
+    controller_manager_interface.start_controllers(controllers)
+
+    move_group.set_named_target('ready')
+    move_group.go(wait=True)
+    move_group.stop()
+    move_group.clear_pose_targets()
+
+    # open the gripper
+    joint_goal = move_group_hand.get_current_joint_values()
+    joint_goal[0] = 0.04
+    joint_goal[1] = 0.04
+    move_group_hand.go(joint_goal, wait=True)
+    # Calling ``stop()`` ensures that there is no residual movement
+    move_group_hand.stop()
+
+    # Move the robot along some waypoints
+    waypoints = []
+    pose_goal = move_group.get_current_pose().pose
+    pose_goal.position.x = 0.5
+    pose_goal.position.y = -0.2
+    pose_goal.position.z = 0.6
+    waypoints.append(copy.deepcopy(pose_goal))
+    pose_goal.position.y = 0.2
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # Do some planning
+    plan, fraction = move_group.compute_cartesian_path(waypoints, 0.01, 0)
+    ref_state = robot.get_current_state()
+    plan = move_group.retime_trajectory(
+        ref_state,
+        plan,
+        velocity_scaling_factor=0.4,
+        acceleration_scaling_factor=0.4,
+        algorithm="time_optimal_trajectory_generation"
+    )
+
+    # Display the plan
+    display_trajectory = moveit_msgs.msg.DisplayTrajectory()
+    display_trajectory.trajectory_start = robot.get_current_state()
+    display_trajectory.trajectory.append(plan)
+    display_trajectory_publisher.publish(display_trajectory)
+
+    # Execute the plan
+    move_group.execute(plan, wait=True)
+
+    # Close the gripper
+    grasp_action_pub = rospy.Publisher(
+        '/franka_gripper/grasp/goal', GraspActionGoal, latch=True, queue_size=20)
+    gag = GraspActionGoal()
+    gag.goal.width = 0.03
+    gag.goal.epsilon.inner = 0.01
+    gag.goal.epsilon.outer = 0.01
+    gag.goal.force = 10
+    gag.goal.speed = 0.05
+    grasp_action_pub.publish(gag)
+
+    time.sleep(5)
+    
+    reload_with_new_scene = rospy.ServiceProxy('reload_with_new_scene', Trigger)
+    reload_with_new_scene(TriggerRequest())
+
+    time.sleep(5)
+
 
 if __name__ == "__main__":
     main()
