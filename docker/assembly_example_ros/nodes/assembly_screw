@@ -19,6 +19,7 @@ from std_srvs.srv import Trigger, TriggerRequest
 import sensor_msgs.msg
 import time
 from controller_manager import controller_manager_interface
+from assembly_score_plugin.srv import AssemblyStatus, AssemblyStatusRequest
 
 
 def wait_for_state_update(scene, box_name, box_is_known=False, box_is_attached=False, timeout=4):
@@ -250,20 +251,31 @@ def main():
     gag.goal.speed = 0.05
     grasp_action_pub.publish(gag)
 
+    # Get assembly status
+    get_assembly_status = rospy.ServiceProxy(
+        '/get_assembly_status', AssemblyStatus)
+    assembly_status = get_assembly_status(AssemblyStatusRequest())
+
+    # Status: 0 running, 1 success, 2 failed, 3 aborted
+    if (assembly_status.status == 0):
+        print('Assembly running')
+    # assembly_status.stage_times with 5 entrys where each entry corresponds to the time it took to complete one stage.
+    # If the entry is negative the stage was not completed yet.
+
     time.sleep(5)
 
     # Trigger reload, this will abort any running assembly
-    reload_with_old_scene = rospy.ServiceProxy('reload_with_old_scene', Trigger)
-    reload_with_old_scene(TriggerRequest())    
-
-    
+    reload_with_old_scene = rospy.ServiceProxy(
+        'reload_with_old_scene', Trigger)
+    reload_with_old_scene(TriggerRequest())
 
     # Always wait for and call user_ready before doing another reload
     rospy.wait_for_service('user_ready')
     user_ready(TriggerRequest())
 
     # reload controllers
-    controllers = ['franka_gripper', 'franka_state_controller', 'effort_joint_trajectory_controller']
+    controllers = ['franka_gripper', 'franka_state_controller',
+                   'effort_joint_trajectory_controller']
     for c in controllers:
         controller_manager_interface.load_controller(c)
     controller_manager_interface.start_controllers(controllers)
@@ -323,8 +335,9 @@ def main():
     grasp_action_pub.publish(gag)
 
     time.sleep(5)
-    
-    reload_with_new_scene = rospy.ServiceProxy('reload_with_new_scene', Trigger)
+
+    reload_with_new_scene = rospy.ServiceProxy(
+        'reload_with_new_scene', Trigger)
     reload_with_new_scene(TriggerRequest())
 
     time.sleep(5)
