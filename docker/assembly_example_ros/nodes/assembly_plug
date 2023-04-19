@@ -1,6 +1,403 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Plugging example
 
+This example for the plugging task will demonstrate how to receive all available
+information from the simulation and give an example on how to control the robot.
+Feel free to extend this example with your own solution.
+"""
+from __future__ import print_function
+
+import sys
+import copy
 import rospy
+import moveit_commander
+import moveit_msgs.msg
+import geometry_msgs.msg
+from franka_gripper.msg import GraspActionGoal
+from std_srvs.srv import Trigger, TriggerRequest
+import sensor_msgs.msg
+import time
+from controller_manager import controller_manager_interface
+from assembly_score_plugin.srv import AssemblyStatus, AssemblyStatusRequest
+
+
+def wait_for_state_update(scene, box_name, box_is_known=False, box_is_attached=False, timeout=4):
+    """Wait until the planning scene state changed.
+    """
+    start = rospy.get_time()
+    seconds = rospy.get_time()
+    while (seconds - start < timeout) and not rospy.is_shutdown():
+        # Test if the box is in attached objects
+        attached_objects = scene.get_attached_objects([box_name])
+        is_attached = len(attached_objects.keys()) > 0
+
+        # Test if the box is in the scene.
+        # Note that attaching the box will remove it from known_objects
+        is_known = box_name in scene.get_known_object_names()
+
+        # Test if we are in the expected state
+        if (box_is_attached == is_attached) and (box_is_known == is_known):
+            return True
+
+        # Sleep so that we give other threads time on the processor
+        rospy.sleep(0.1)
+        seconds = rospy.get_time()
+
+    # If we exited the while loop without returning then we timed out
+    return False
+
+
+def main():
+    """Runs the assembly example.
+    """
+
+    # Start a ros-node
+    rospy.init_node("assembly_example", anonymous=True)
+
+    # Signal assembly manager that we are ready to start the assembly run
+    # This will unpause the simulation and makes all relevant rostopics accessible
+    rospy.wait_for_service('/user_ready')
+    user_ready = rospy.ServiceProxy('/user_ready', Trigger)
+    user_ready(TriggerRequest())
+
+    # Get constants from the rosparam-server
+    # difficulty_level : {"baseline", "localization", "slippage", "combined"}
+    difficulty_level = rospy.get_param('/assembly_manager/difficulty_level')
+    eval_mode = rospy.get_param('/assembly_manager/eval_mode')
+
+    # Get object positions
+    # Note that there is a 0-centered noise added to these poses.
+    # For more information on where exactly these are located on the object check
+    # [wiki](https://github.com/DavidPL1/assembly_example/wiki/plugging)
+    fixture_pos_msg = rospy.wait_for_message(
+        '/fixture_pos', geometry_msgs.msg.PointStamped)
+    fixture_quat_msg = rospy.wait_for_message(
+        '/fixture_quat', geometry_msgs.msg.QuaternionStamped)
+    plug_pos_msg = rospy.wait_for_message(
+        '/plug_pos', geometry_msgs.msg.PointStamped)
+    plug_quat_msg = rospy.wait_for_message(
+        '/plug_quat', geometry_msgs.msg.QuaternionStamped)
+    force_EE_msg = rospy.wait_for_message(
+        '/force_EE', geometry_msgs.msg.Vector3Stamped)
+    torque_EE_msg = rospy.wait_for_message(
+        '/force_EE', geometry_msgs.msg.Vector3Stamped)
+
+    if not eval_mode:
+        # In train mode, the ground truth (signal without the noise) for these sensors is also available
+        fixture_pos_msg_GT = rospy.wait_for_message(
+            '/fixture_pos_GT', geometry_msgs.msg.PointStamped)
+        fixture_quat_msg_GT = rospy.wait_for_message(
+            '/fixture_quat_GT', geometry_msgs.msg.QuaternionStamped)
+        plug_pos_msg_GT = rospy.wait_for_message(
+            '/plug_pos_GT', geometry_msgs.msg.PointStamped)
+        plug_quat_msg_GT = rospy.wait_for_message(
+            '/plug_quat_GT', geometry_msgs.msg.QuaternionStamped)
+        force_EE_msg_GT = rospy.wait_for_message(
+            '/force_EE_GT', geometry_msgs.msg.Vector3Stamped)
+        torque_EE_msg_GT = rospy.wait_for_message(
+            '/force_EE_GT', geometry_msgs.msg.Vector3Stamped)
+        
+        # Furthermore, the unperturbed (not offset) pose of the fixture is also available.
+        # This is relevant mainly for the difficulty levels "localization" and "combined"; these
+        # `goal_*`` sensors provide the same data as the `fixture_*` ones on difficulty levels
+        # "baseline" and "slippage".
+        goal_pos_msg = rospy.wait_for_message(
+            '/goal_pos', geometry_msgs.msg.PointStamped)
+        goal_quat_msg = rospy.wait_for_message(
+            '/goal_quat', geometry_msgs.msg.QuaternionStamped)
+        goal_pos_GT_msg = rospy.wait_for_message(
+            '/goal_pos_GT', geometry_msgs.msg.PointStamped)
+        goal_quat_GT_msg = rospy.wait_for_message(
+            '/goal_quat_GT', geometry_msgs.msg.QuaternionStamped)
+
+    # Access the joint states
+    joint_states_msg = rospy.wait_for_message(
+        '/joint_states', sensor_msgs.msg.JointState)
+
+    # Access the camera streams
+    workspace_cam_depth_msg = rospy.wait_for_message(
+        '/cameras/workspace_cam/depth', sensor_msgs.msg.Image)
+    workspace_cam_rgb_msg = rospy.wait_for_message(
+        '/cameras/workspace_cam/rgb', sensor_msgs.msg.Image)
+
+    workspace_cam2_depth_msg = rospy.wait_for_message(
+        '/cameras/workspace_cam2/depth', sensor_msgs.msg.Image)
+    workspace_cam2_rgb_msg = rospy.wait_for_message(
+        '/cameras/workspace_cam2/rgb', sensor_msgs.msg.Image)
+
+    gripper_cam_depth_msg = rospy.wait_for_message(
+        '/cameras/gripper_cam/depth', sensor_msgs.msg.Image)
+    gripper_cam_rgb_msg = rospy.wait_for_message(
+        '/cameras/gripper_cam/rgb', sensor_msgs.msg.Image)
+
+
+    # The following is an example on how to control the robot with MoveIt. You can also use any other
+    # available method in ROS to control the robot. For a more in detail tutorial on how to command the
+    # robot via MoveIt please see
+    # https://ros-planning.github.io/moveit_tutorials/doc/move_group_python_interface/move_group_python_interface_tutorial.html.
+    # 
+    # For more details on interacting wiht the simulation, e.g., reloading the scene, check out the `assembly_screw` example.
+
+    # Instantiate a `RobotCommander`_ object. Provides information such as the robot's
+    # kinematic model and the robot's current joint states
+    moveit_commander.roscpp_initialize(sys.argv)
+    robot = moveit_commander.RobotCommander()
+
+    # Instantiate a `PlanningSceneInterface`_ object. This provides a remote interface
+    # for getting, setting, and updating the robot's internal understanding of the
+    # surrounding world:
+    scene = moveit_commander.PlanningSceneInterface()
+
+    # Insert the table into the planning scene
+    table_height = 0.350
+    table_pose = geometry_msgs.msg.PoseStamped()
+    table_pose.pose.orientation.w = 1
+    table_pose.pose.position.x = 0.5
+    table_pose.pose.position.y = 0.0
+    table_pose.pose.position.z = table_height / 2
+    table_pose.header.frame_id = 'world'
+
+    while not wait_for_state_update(scene, 'table', True, False, 4):
+        scene.add_box('table', table_pose, size=(0.50, 0.80, table_height))
+
+    # Instantiate a `MoveGroupCommander`_ object.  This object is an interface
+    # to a planning group (group of joints).
+    # This interface can be used to plan and execute motions:
+    move_group = moveit_commander.MoveGroupCommander('panda_arm')
+    move_group.set_support_surface_name('table')
+    move_group_hand = moveit_commander.MoveGroupCommander('panda_hand')
+
+    # By default, the frame of the Panda Hand is used as a TCP during planning. The middlepoint between the gripper fingers is
+    # offset by ~0.1034 meters.
+    tcp_offset = 0.1034  # meters
+
+    # The height of the plug and fixture objects per the [wiki](https://github.com/DavidPL1/assembly_example/wiki/plugging).
+    plug_height = 0.05  # meters
+    fixture_height = 0.05  # meters
+
+    # Create a `DisplayTrajectory`_ ROS publisher which is used to display
+    # trajectories in Rviz:
+    display_trajectory_publisher = rospy.Publisher(
+        "/move_group/display_planned_path",
+        moveit_msgs.msg.DisplayTrajectory,
+        queue_size=20,
+    )
+
+    move_group.set_named_target('ready')
+    move_group.go(wait=True)
+    move_group.stop()
+    move_group.clear_pose_targets()
+
+    # Open the gripper
+    joint_goal = move_group_hand.get_current_joint_values()
+    joint_goal[0] = 0.04
+    joint_goal[1] = 0.04
+    move_group_hand.go(joint_goal, wait=True)
+    # Calling ``stop()`` ensures that there is no residual movement
+    move_group_hand.stop()
+
+    # Move the robot along waypoints
+    # * 0.05 meters above the plug
+    waypoints = []
+    pose_goal = move_group.get_current_pose().pose
+    pose_goal.position.x = plug_pos_msg_GT.point.x
+    pose_goal.position.y = plug_pos_msg_GT.point.y
+    pose_goal.position.z = tcp_offset + plug_pos_msg_GT.point.z + plug_height + 0.05
+    waypoints.append(copy.deepcopy(pose_goal))
+    
+    # * 0.018 meters below the plug's top (so that it can be grasped)
+    grip_depth = 0.018
+    pose_goal.position.z = tcp_offset + plug_pos_msg_GT.point.z + plug_height - grip_depth
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # Do some planning
+    plan, fraction = move_group.compute_cartesian_path(waypoints, 0.01, 0)
+    ref_state = robot.get_current_state()
+    plan = move_group.retime_trajectory(
+        ref_state,
+        plan,
+        velocity_scaling_factor=0.4,
+        acceleration_scaling_factor=0.4,
+        algorithm="time_optimal_trajectory_generation"
+    )
+
+    # Display the plan
+    display_trajectory = moveit_msgs.msg.DisplayTrajectory()
+    display_trajectory.trajectory_start = robot.get_current_state()
+    display_trajectory.trajectory.append(plan)
+    display_trajectory_publisher.publish(display_trajectory)
+
+    # Execute the plan
+    move_group.execute(plan, wait=True)
+
+    # Close the gripper
+    grasp_action_pub = rospy.Publisher(
+        '/franka_gripper/grasp/goal', GraspActionGoal, latch=True, queue_size=20)
+    gag = GraspActionGoal()
+    gag.goal.width = 0.03
+    gag.goal.epsilon.inner = 0.01
+    gag.goal.epsilon.outer = 0.01
+    gag.goal.force = 10
+    gag.goal.speed = 0.05
+    grasp_action_pub.publish(gag)
+    time.sleep(5)
+
+    # Move the robot along waypoints
+    # * 0.05 meters above the plug (completing stage 1 of the task)
+    waypoints = []
+    pose_goal = move_group.get_current_pose().pose
+    pose_goal.position.x = plug_pos_msg_GT.point.x
+    pose_goal.position.y = plug_pos_msg_GT.point.y
+    pose_goal.position.z = tcp_offset + plug_pos_msg_GT.point.z + plug_height + 0.05
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # * 0.05 meters above the fixture, offset by 2 millimeters along y
+    pose_goal.position.x = fixture_pos_msg_GT.point.x
+    pose_goal.position.y = fixture_pos_msg_GT.point.y - 0.002
+    pose_goal.position.z = tcp_offset + fixture_pos_msg_GT.point.z + fixture_height + 0.05
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # * bump into the fixture (completing stage 2 of the task)
+    pose_goal.position.z = tcp_offset + fixture_pos_msg_GT.point.z + fixture_height + plug_height - grip_depth - 0.0005
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # * 0.05 meters above the fixture, offset by 2 millimeters along y
+    pose_goal.position.z = tcp_offset + fixture_pos_msg_GT.point.z + fixture_height + 0.05
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # * 0.05 meters above the fixture
+    pose_goal.position.y = fixture_pos_msg_GT.point.y
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # * 2 millimeters above the fixture (completing stage 3 of the task)
+    pose_goal.position.z = tcp_offset + fixture_pos_msg_GT.point.z + fixture_height + plug_height - grip_depth + 0.002
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # Do some planning
+    plan, fraction = move_group.compute_cartesian_path(waypoints, 0.01, 0)
+    ref_state = robot.get_current_state()
+    plan = move_group.retime_trajectory(
+        ref_state,
+        plan,
+        velocity_scaling_factor=0.4,
+        acceleration_scaling_factor=0.4,
+        algorithm="time_optimal_trajectory_generation"
+    )
+
+    # Display the plan
+    display_trajectory = moveit_msgs.msg.DisplayTrajectory()
+    display_trajectory.trajectory_start = robot.get_current_state()
+    display_trajectory.trajectory.append(plan)
+    display_trajectory_publisher.publish(display_trajectory)
+
+    # Execute the plan
+    move_group.execute(plan, wait=True)
+
+    # Get assembly status
+    get_assembly_status = rospy.ServiceProxy(
+        '/get_assembly_status', AssemblyStatus)
+    assembly_status = get_assembly_status(AssemblyStatusRequest())
+
+    # Status: 0 running, 1 success, 2 failed, 3 aborted
+    if (assembly_status.status == 0):
+        rospy.loginfo('Assembly running')
+        for stage_id, stage_time in enumerate(assembly_status.stage_times):
+            rospy.loginfo(f"  {stage_id} : {stage_time}")
+    # assembly_status.stage_times with 4 (+1) entries where each entry corresponds to the time it took to complete one stage.
+    # If the entry is negative the stage was not completed yet (the last, fifth entry might be -1 which is the intended behavior)
+
+    # Open the gripper (dropping the plug into the fixture)
+    joint_goal = move_group_hand.get_current_joint_values()
+    joint_goal[0] = 0.04
+    joint_goal[1] = 0.04
+    move_group_hand.go(joint_goal, wait=True)
+    # Calling ``stop()`` ensures that there is no residual movement
+    move_group_hand.stop()
+    time.sleep(5)
+
+    # Fully close the gripper
+    joint_goal = move_group_hand.get_current_joint_values()
+    joint_goal[0] = 0.0
+    joint_goal[1] = 0.0
+    move_group_hand.go(joint_goal, wait=True)
+    # Calling ``stop()`` ensures that there is no residual movement
+    move_group_hand.stop()
+
+    # Move the robot along some waypoints
+    # * bump into the plug from above, pushing it in (completing stage 4 of the task)
+    waypoints = []
+    pose_goal = move_group.get_current_pose().pose
+    pose_goal.position.x = fixture_pos_msg_GT.point.x
+    pose_goal.position.y = fixture_pos_msg_GT.point.y
+    pose_goal.position.z = tcp_offset + fixture_pos_msg_GT.point.z + fixture_height - 0.0005
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # Do some planning
+    plan, fraction = move_group.compute_cartesian_path(waypoints, 0.01, 0)
+    ref_state = robot.get_current_state()
+    plan = move_group.retime_trajectory(
+        ref_state,
+        plan,
+        velocity_scaling_factor=0.4,
+        acceleration_scaling_factor=0.4,
+        algorithm="time_optimal_trajectory_generation"
+    )
+
+    # Display the plan
+    display_trajectory = moveit_msgs.msg.DisplayTrajectory()
+    display_trajectory.trajectory_start = robot.get_current_state()
+    display_trajectory.trajectory.append(plan)
+    display_trajectory_publisher.publish(display_trajectory)
+
+    # Execute the plan
+    move_group.execute(plan, wait=True)
+    time.sleep(5)
+
+    # Move the robot along some waypoints
+    # * back 0.05 meters above the fixture
+    waypoints = []
+    pose_goal = move_group.get_current_pose().pose
+    pose_goal.position.x = fixture_pos_msg_GT.point.x
+    pose_goal.position.y = fixture_pos_msg_GT.point.y
+    pose_goal.position.z = tcp_offset + fixture_pos_msg_GT.point.z + fixture_height + 0.05
+    waypoints.append(copy.deepcopy(pose_goal))
+
+    # Do some planning
+    plan, fraction = move_group.compute_cartesian_path(waypoints, 0.01, 0)
+    ref_state = robot.get_current_state()
+    plan = move_group.retime_trajectory(
+        ref_state,
+        plan,
+        velocity_scaling_factor=0.4,
+        acceleration_scaling_factor=0.4,
+        algorithm="time_optimal_trajectory_generation"
+    )
+
+    # Display the plan
+    display_trajectory = moveit_msgs.msg.DisplayTrajectory()
+    display_trajectory.trajectory_start = robot.get_current_state()
+    display_trajectory.trajectory.append(plan)
+    display_trajectory_publisher.publish(display_trajectory)
+
+    # Execute the plan
+    move_group.execute(plan, wait=True)
+
+    # Get assembly status
+    get_assembly_status = rospy.ServiceProxy(
+        '/get_assembly_status', AssemblyStatus)
+    assembly_status = get_assembly_status(AssemblyStatusRequest())
+
+    # Status: 0 running, 1 success, 2 failed, 3 aborted
+    if (assembly_status.status == 0):
+        rospy.loginfo('Assembly running')
+        for stage_id, stage_time in enumerate(assembly_status.stage_times):
+            rospy.loginfo(f"  {stage_id} : {stage_time}")
+    # assembly_status.stage_times with 4 (+1) entries where each entry corresponds to the time it took to complete one stage.
+    # If the entry is negative the stage was not completed yet (the last, fifth entry might be -1 which is the intended behavior)
+
+    return
+
 
 if __name__ == '__main__':
-    pass
+    main()
