@@ -2,7 +2,7 @@ version: '2'
 services:
   server:
     image: s4dx/assembly_server:latest
-    command: headless:=true task:=plugging
+    command: task:=plugging
     environment:
       - ROS_HOSTNAME=server
     networks:
